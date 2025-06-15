@@ -1,29 +1,12 @@
-import pandas as pd
 import numpy as np
-from sklearn.dummy import DummyClassifier
-from sklearn.utils import resample
-from sklearn.preprocessing import StandardScaler
+import pandas as pd
 from mord import LogisticAT
-from scipy import stats
-import warnings
+from sklearn.preprocessing import StandardScaler
 
-def approximate_p_value(model, X, y, B=100):
-    coefs = []
-    for _ in range(B):
-        X_sample, y_sample = resample(X, y)
-        try:
-            m = LogisticAT()
-            m.fit(X_sample, y_sample)
-            coefs.append(m.coef_[0])
-        except:
-            continue
-    if len(coefs) < 2:
-        return None
-    se = np.std(coefs)
-    z = model.coef_[0] / se
-    return 2 * (1 - stats.norm.cdf(np.abs(z)))
+from pvalues import approximate_p_value
 
-def find_best_combinations_ordinal(data, target):
+
+def find_best_combinations_ordinal(data, target, training_sample_ratio=0.5):
     if 'remedy_type' in data.columns:
         data['remedy_type'] = data['remedy_type'].astype('category').cat.codes
 
@@ -34,30 +17,42 @@ def find_best_combinations_ordinal(data, target):
     data_scaled = data.copy()
     data_scaled[predictors] = scaler.fit_transform(data[predictors])
 
+    cnt_training_samples = int(data.shape[0] * training_sample_ratio)
+
     for var in predictors:
         try:
             X = data_scaled[[var]].values
             y = data_scaled[target].values
 
+            from sklearn.model_selection import train_test_split
+
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, train_size=training_sample_ratio, random_state=42
+            )
+
+            print(f"✅ Split {len(X_train)} training / {len(X_test)} testing rows for {var}")
+
             model = LogisticAT()
-            model.fit(X, y)
-            y_pred = model.predict(X)
+            model.fit(X_train, y_train)
+
+            y_pred = model.predict(X_test)
+            y_proba = model.predict_proba(X_test)
+
             from sklearn.metrics import log_loss
+            logloss_model = log_loss(y_test, y_proba)
 
-            y_proba = model.predict_proba(X)
-            logloss_model = log_loss(y, y_proba)
-
-            classes, counts = np.unique(y, return_counts=True)
+            # Null model using class distribution
+            classes, counts = np.unique(y_test, return_counts=True)
             probs = counts / counts.sum()
-            y_null_proba = np.tile(probs, (len(y), 1))
-            logloss_null = log_loss(y, y_null_proba)
+            y_null_proba = np.tile(probs, (len(y_test), 1))
+            logloss_null = log_loss(y_test, y_null_proba)
 
             pseudo_r2 = 1 - (logloss_model / logloss_null)
-
-            r2 = np.corrcoef(y, y_pred)[0, 1] ** 2 if len(set(y_pred)) > 1 else 0
+            r2 = np.corrcoef(y_test, y_pred)[0, 1] ** 2 if len(set(y_pred)) > 1 else 0
 
             coef = model.coef_[0]
-            p_val = approximate_p_value(model, X, y)
+            p_val = approximate_p_value(model, X_test, y_test)
+
             logit_eq = f"logit(P(Y ≤ j)) = θ_j - ({round(coef, 3)} × {var})"
 
             individual_results.append({
@@ -74,7 +69,6 @@ def find_best_combinations_ordinal(data, target):
 
     return individual_results
 
-# Clumsy way of inputting data. Will fix later.
 if __name__ == "__main__":
     data = pd.DataFrame({
         #compliance_level is the dependent variabe.
@@ -108,13 +102,13 @@ if __name__ == "__main__":
                             0.39, 0.45, 0.91, 0.91, 0.69, 0.66, 0.33, 0.87, 0.6, 0.63,
                             0.43, 0.82, 0.89, 0.82, 0.91, 0.22, 0.89, 0.22, 0.22, 0.4,
                             0.17, 0.51, 0.28, 0.7],
-        'GDP_billions': [0.10, 42.26, 43.85, 14.6, 0.24, 3.32, 250, 250, 71.46, 1.52,
-                         1.52, 100.5, 33.76, 4040, 356.72, 31.53, 1.11, 2.04, 1.85, 6160,
-                         4.94, 5.81, 120.58, 28.61, 3.87, 17.54, 8.98, 10600, 195.66, 95.5,
-                         258.38, 12200, 6.57, 4.38, 12.37, 7.42, 44.89, 3.68, 2930, 230.81,
-                         193.62, 8.3, 41.95, 283.23, 17.66, 370.69, 29.31, 2100, 13.44, 10.22,
-                         420.33, 200.79, 259.56, 4900, 56.44, 13.03, 62.42, 13.03, 13.03, 320.91,
-                         9.48, 109.7, 45.57, 345.33],
+        'log_GDP_Diff': [0.4437, 2.0612, 2.9583, 0.0922, 1.7139, 0.7016, 0.8657, 1.2101, 0.8799, 2.4684,
+                         2.1323, 1.5043, 0.6183, 1.0541, 1.0541, 1.4534, 1.4534, 0.0424, 0.0424, 3.6164,
+                         0.0705, 0.0705, 0.0744, 1.3846, 0.1511, 0.2907, 0.2907, 0.7308, 0.2878, 0.8859,
+                         1.4713, 1.1729, 0.1761, 0.1761, 0.222, 0.222, 0.454, 0.6323, 3.4673, 0.0763,
+                         0.0763, 0.5687, 1.0043, 1.4313, 1.4506, 1.5466, 0.5839, 0.2341, 0.1189, 0.1189,
+                         1.3267, 0.1115, 0.1115, 0.5229, 0.6366, 0.6804, 0.6805, 0.68051, 0.6804, 0.9469,
+                         1.0634, 1.0634, 0.159, 1.3437],
         'judge_from_country': [0, 1, 1, 0, 0, 0, 1, 1, 1, 0,
                                0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
                                1, 1, 1, 1, 0, 1, 1, 1, 1, 1,
@@ -152,3 +146,4 @@ if __name__ == "__main__":
         print(results_df.to_string(index=False))
     else:
         print("No valid models returned.")
+
