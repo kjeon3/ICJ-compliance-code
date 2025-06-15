@@ -1,5 +1,6 @@
 My pvalues.py file contains the code to obtain the p-values for each of my independent variables. 
 
+
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
@@ -55,14 +56,7 @@ def find_best_combinations_statsmodels(data, target):
     else:
         print("No valid models returned.")
 
-
-def find_best_combinations_ordinal():
-    return None
-
-
-y = data['compliance_level']
-    X = data.drop(columns=['compliance_level'])
-
+    
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
